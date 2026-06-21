@@ -1,0 +1,11 @@
+venv/
+.git
+__pycache__/
+*.pyc
+.env
+*.db
+*.db-journal
+frontend/
+.streamlit/
+smtp_config.toml
+README.md
