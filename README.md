@@ -52,7 +52,7 @@ Three roles, three sets of screens. Everyone signs in from the same login page; 
 
 **First login for a new hire.** When an admin adds an employee, the system generates a temporary password and shows it to the admin once (it isn't emailed — copy it and hand it over directly). The new hire logs in with that temp password and is dropped straight into a forced "change your password" screen with no way to skip it; only after setting a real password do they reach their normal home screen. The same flow applies to anyone an admin re-adds or whose password is reset.
 
-**Employee flow.** Calendar (apply for leave by clicking a date, or click-drag a range for multi-day requests; pick the leave type and, for a single day, a Morning/Evening/Full-day session), My Requests (every request they've ever filed, with status), and Holiday Calendar (public holidays for their location). Leave balance — casual, sick, earned, floating, maternity, paternity — shows alongside the calendar and is reserved the moment a request is filed, restored if it's rejected or cancelled, and stays spent once approved.
+**Employee flow.** Calendar (apply for leave by clicking a date, or click-drag a range for multi-day requests; pick the leave type and, for a single day, or multiple days, My Requests (every request they've ever filed, with status), and Holiday Calendar (public holidays for their location). Leave balance — casual, sick, earned, floating, maternity, paternity — shows alongside the calendar and is reserved the moment a request is filed, restored if it's rejected or cancelled, and stays spent once approved.
 
 **Manager flow.** Everything an employee gets, plus:
 - *Approve Leave* — every pending request from their direct reports, grouped into one row per continuous date range (a 3-day request is one row with Approve/Reject, not three).
@@ -73,3 +73,267 @@ Every user starts with: casual 10, sick 10, earned 10, and floating days per the
 - Status colors (pending/approved/cancelled/rejected/holiday) are reserved exclusively for leave-status indicators throughout the UI; leave *type* (casual/sick/earned/floating) has its own separate color set so the two are never confused at a glance.
 - Every admin-only and manager-only action is enforced server-side (403 if you're not allowed), not just hidden in the UI — the screens reflect what the backend will actually let you do.
 - If the SQLite file's default location ever causes locking issues on your machine, point it elsewhere with `LEAVELY_DB_PATH=C:\path\to\leavely.db` before starting the backend. Likewise, if you're running the frontend against a backend on a non-default port, set `LEAVELY_API_URL` before starting Streamlit.
+
+
+# SMTP Email Setup Guide
+
+## Overview
+
+Leavely sends emails for:
+
+* Temporary passwords
+* Employee onboarding
+
+If SMTP is not configured, the application will display:
+
+```text
+WARNING:root:SMTP config missing; skipping temporary password email
+```
+
+This means the application is running correctly, but email delivery is disabled.
+
+---
+
+# Prerequisites
+
+Install required Python packages:
+
+```bash
+pip install python-dotenv
+```
+
+---
+
+# SMTP Configuration
+
+The application reads SMTP settings from environment variables.
+
+## Required Variables
+
+| Variable              | Description          |
+| --------------------- | -------------------- |
+| LEAVELY_SMTP_HOST     | SMTP server hostname |
+| LEAVELY_SMTP_PORT     | SMTP server port     |
+| LEAVELY_SMTP_USER     | SMTP username        |
+| LEAVELY_SMTP_PASSWORD | SMTP password        |
+
+## Optional Variables
+
+| Variable             | Description             |
+| -------------------- | ----------------------- |
+| LEAVELY_EMAIL_FROM   | Sender email address    |
+| LEAVELY_SMTP_TIMEOUT | SMTP timeout in seconds |
+
+Default timeout:
+
+```text
+10
+```
+
+---
+
+# Gmail SMTP Configuration
+
+## SMTP Settings
+
+```env
+LEAVELY_SMTP_HOST=smtp.gmail.com
+LEAVELY_SMTP_PORT=587
+LEAVELY_SMTP_USER=your-email@gmail.com
+LEAVELY_SMTP_PASSWORD=your-app-password
+LEAVELY_EMAIL_FROM=your-email@gmail.com
+```
+
+## Important
+
+Google no longer allows standard Gmail passwords for SMTP authentication.
+
+You must:
+
+1. Enable Two-Factor Authentication (2FA)
+2. Generate an App Password
+3. Use the App Password as LEAVELY_SMTP_PASSWORD
+
+If App Passwords are unavailable for your account, use an alternative SMTP provider such as Brevo or SendGrid.
+
+---
+
+# Brevo SMTP Configuration (Recommended)
+
+Brevo offers a free SMTP service suitable for development and MVP deployments.
+
+## SMTP Settings
+
+```env
+LEAVELY_SMTP_HOST=smtp-relay.brevo.com
+LEAVELY_SMTP_PORT=587
+LEAVELY_SMTP_USER=your-brevo-login
+LEAVELY_SMTP_PASSWORD=your-brevo-smtp-key
+LEAVELY_EMAIL_FROM=no-reply@yourdomain.com
+```
+
+---
+
+# Create a .env File
+
+Create a file named:
+
+```text
+.env
+```
+
+Add the SMTP configuration:
+
+```env
+LEAVELY_SMTP_HOST=smtp.gmail.com
+LEAVELY_SMTP_PORT=587
+LEAVELY_SMTP_USER=your-email@gmail.com
+LEAVELY_SMTP_PASSWORD=your-password
+LEAVELY_EMAIL_FROM=your-email@gmail.com
+```
+
+---
+
+# Load Environment Variables
+
+Add the following code during application startup:
+
+```python
+from dotenv import load_dotenv
+
+load_dotenv()
+```
+
+Example:
+
+```python
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+smtp_host = os.getenv("LEAVELY_SMTP_HOST")
+smtp_port = os.getenv("LEAVELY_SMTP_PORT")
+smtp_user = os.getenv("LEAVELY_SMTP_USER")
+smtp_password = os.getenv("LEAVELY_SMTP_PASSWORD")
+```
+
+---
+
+# Verify Configuration
+
+Run:
+
+```python
+import os
+
+print(os.getenv("LEAVELY_SMTP_HOST"))
+print(os.getenv("LEAVELY_SMTP_USER"))
+```
+
+Expected output:
+
+```text
+smtp.gmail.com
+your-email@gmail.com
+```
+
+---
+
+# Local Development
+
+Start the application after setting environment variables:
+
+```bash
+streamlit run app.py
+```
+
+or
+
+```bash
+python app.py
+```
+
+depending on your startup command.
+
+---
+
+# Streamlit Cloud Deployment
+
+Add SMTP credentials under:
+
+Settings → Secrets
+
+Example:
+
+```toml
+LEAVELY_SMTP_HOST="smtp.gmail.com"
+LEAVELY_SMTP_PORT="587"
+LEAVELY_SMTP_USER="your-email@gmail.com"
+LEAVELY_SMTP_PASSWORD="your-app-password"
+LEAVELY_EMAIL_FROM="your-email@gmail.com"
+```
+
+Do not commit passwords or SMTP credentials to GitHub.
+
+---
+
+# Troubleshooting
+
+## SMTP Config Missing
+
+Error:
+
+```text
+WARNING:root:SMTP config missing
+```
+
+Resolution:
+
+* Verify environment variables exist
+* Verify .env file is loaded
+* Restart the application
+
+---
+
+## Authentication Failed
+
+Error:
+
+```text
+SMTPAuthenticationError
+```
+
+Resolution:
+
+* Verify SMTP username
+* Verify SMTP password
+* Use App Password for Gmail
+* Check SMTP provider credentials
+
+---
+
+## Emails Not Received
+
+Check:
+
+* Spam folder
+* SMTP logs
+* Sender address configuration
+* SMTP provider dashboard
+
+---
+
+# Security Best Practices
+
+* Never hardcode SMTP passwords.
+* Store credentials in environment variables.
+* Use a dedicated sender account.
+* Rotate SMTP credentials periodically.
+* Do not commit .env files to source control.
+
+Add the following to .gitignore:
+
+```gitignore
+.env
+```

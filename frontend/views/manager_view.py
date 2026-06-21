@@ -211,7 +211,7 @@ def _analytics_section(user: dict):
         capacity_days = []
 
     try:
-        members = api.get_team_members(user["id"])
+        members = api.get_team_members_with_balances(user["id"])
     except api.APIError:
         members = []
 
@@ -256,10 +256,12 @@ def _analytics_section(user: dict):
     on_leave_ids_today = {r["user_id"] for r in approved_requests if r["date"] == today.isoformat()}
 
     for m in members:
-        try:
-            bal = api.get_balance(m["id"])
-        except api.APIError:
-            bal = {"casual": 0, "sick": 0, "earned": 0, "floating": 0}
+        bal = {
+            "casual": m.get("casual", 0),
+            "sick": m.get("sick", 0),
+            "earned": m.get("earned", 0),
+            "floating": m.get("floating", 0),
+        }
         is_on_leave = m["id"] in on_leave_ids_today
         with st.container(border=True):
             c1, c2, c3 = st.columns([2.4, 1.3, 3.3], vertical_alignment="center")

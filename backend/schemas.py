@@ -2,11 +2,11 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -25,6 +25,25 @@ class UserOut(BaseModel):
 
 class BalanceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    casual: float
+    sick: float
+    earned: float
+    floating: float
+    maternity: float
+    paternity: float
+
+
+class TeamMemberBalanceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    email: str
+    role: str
+    manager_id: Optional[int] = None
+    location: str
+    bio: Optional[str] = None
+    is_active: bool = True
+    must_change_password: bool = False
     casual: float
     sick: float
     earned: float
@@ -122,7 +141,7 @@ class NotificationOut(BaseModel):
 class EmployeeCreate(BaseModel):
     requested_by: int  # must be a superuser
     name: str
-    email: str
+    email: EmailStr
     role: str  # "employee" | "manager" | "superuser"
     bio: Optional[str] = None
     manager_id: Optional[int] = None

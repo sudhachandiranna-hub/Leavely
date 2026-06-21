@@ -3,12 +3,27 @@
 Run: uvicorn backend.main:app --reload --port 8000   (from the project root)
 """
 import calendar as cal
+import logging
+import os
 import secrets
+import smtplib
 from datetime import date as date_cls, datetime
+from email.message import EmailMessage
+from pathlib import Path
 from typing import List, Optional
+
+from dotenv import load_dotenv
+
+# Load backend/../.env (project root) before anything below reads os.environ —
+# this must run before the `.database` import, since database.py reads
+# LEAVELY_DB_PATH at module load time. Without this, LEAVELY_SMTP_* and
+# friends only exist if they were `set` manually in the exact terminal that
+# launched uvicorn, which is the bug that made SMTP silently never send.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .database import get_db
@@ -31,6 +46,7 @@ from .schemas import (
     LocationConfigUpdate,
     LoginRequest,
     NotificationOut,
+    TeamMemberBalanceOut,
     UserOut,
 )
 from .security import hash_password, verify_password
@@ -94,6 +110,56 @@ def _floating_days_for(db: Session, location: str) -> int:
     the global default of 2 if that location has no LocationConfig row."""
     cfg = db.get(LocationConfig, location)
     return cfg.floating_days if cfg else 2
+
+
+def _smtp_configured() -> bool:
+    return bool(os.environ.get("LEAVELY_SMTP_HOST")) and bool(os.environ.get("LEAVELY_SMTP_USER")) and bool(os.environ.get("LEAVELY_SMTP_PASSWORD"))
+
+
+def _send_temporary_password_email(email: str, temp_password: str) -> None:
+    """Send the new user their temporary password by email."""
+    smtp_host = os.environ.get("LEAVELY_SMTP_HOST")
+    smtp_port = int(os.environ.get("LEAVELY_SMTP_PORT", "587"))
+    smtp_user = os.environ.get("LEAVELY_SMTP_USER")
+    smtp_password = os.environ.get("LEAVELY_SMTP_PASSWORD")
+    from_address = os.environ.get("LEAVELY_EMAIL_FROM", "no-reply@leavely.com")
+    smtp_timeout = float(os.environ.get("LEAVELY_SMTP_TIMEOUT", "10"))
+
+    message = EmailMessage()
+    message["Subject"] = "Your Leavely account has been created"
+    message["From"] = from_address
+    message["To"] = email
+    message.set_content(
+        f"Hello,\n\n"
+        f"An account has been created for you in Leavely. Use the temporary password below to log in:\n\n"
+        f"Temporary password: {temp_password}\n\n"
+        "You will be asked to set a new password after you log in.\n\n"
+        "If you did not expect this email, please contact your administrator.\n"
+    )
+
+    try:
+        if smtp_port == 465:
+            smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=smtp_timeout)
+        else:
+            smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=smtp_timeout)
+
+        with smtp:
+            smtp.ehlo()
+            if smtp_port != 465 and smtp.has_extn("STARTTLS"):
+                smtp.starttls()
+                smtp.ehlo()
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+    except Exception as exc:
+        logging.error(
+            "Failed to send temporary password email to %s via %s:%s: %s",
+            email,
+            smtp_host,
+            smtp_port,
+            exc,
+            exc_info=True,
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +357,36 @@ def get_team_members(manager_id: int, db: Session = Depends(get_db)):
     return db.query(User).filter(User.manager_id == manager_id).all()
 
 
+@app.get("/team/members-with-balances", response_model=List[TeamMemberBalanceOut])
+def get_team_members_with_balances(manager_id: int, db: Session = Depends(get_db)):
+    rows = (
+        db.query(User, LeaveBalance)
+        .outerjoin(LeaveBalance, User.id == LeaveBalance.user_id)
+        .filter(User.manager_id == manager_id)
+        .all()
+    )
+    return [
+        {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "manager_id": user.manager_id,
+            "location": user.location,
+            "bio": user.bio,
+            "is_active": user.is_active,
+            "must_change_password": user.must_change_password,
+            "casual": balance.casual if balance else 0.0,
+            "sick": balance.sick if balance else 0.0,
+            "earned": balance.earned if balance else 0.0,
+            "floating": balance.floating if balance else 0.0,
+            "maternity": balance.maternity if balance else 0.0,
+            "paternity": balance.paternity if balance else 0.0,
+        }
+        for user, balance in rows
+    ]
+
+
 @app.get("/team/capacity", response_model=List[CapacityDayOut])
 def team_capacity(
     manager_id: int,
@@ -301,25 +397,20 @@ def team_capacity(
     team_ids = _team_ids(db, manager_id)
     total = len(team_ids)
 
-    def on_leave_count(d: date_cls) -> int:
-        if not team_ids:
-            return 0
-        return (
-            db.query(LeaveRequest)
-            .filter(
-                LeaveRequest.user_id.in_(team_ids),
-                LeaveRequest.date == d,
-                LeaveRequest.status == "approved",
-            )
-            .count()
-        )
-
     if date is not None:
         try:
             d = datetime.strptime(date, "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(status_code=400, detail="date must be in YYYY-MM-DD format.")
-        n = on_leave_count(d)
+        n = (
+            db.query(func.count(LeaveRequest.id))
+            .filter(
+                LeaveRequest.user_id.in_(team_ids),
+                LeaveRequest.date == d,
+                LeaveRequest.status == "approved",
+            )
+            .scalar()
+        ) if team_ids else 0
         return [CapacityDayOut(date=d, total=total, on_leave=n, available=total - n)]
 
     if month is not None:
@@ -328,10 +419,28 @@ def team_capacity(
         except ValueError:
             raise HTTPException(status_code=400, detail="month must be in YYYY-MM format.")
         days_in_month = cal.monthrange(year, mon)[1]
+        start = date_cls(year, mon, 1)
+        end = date_cls(year, mon, days_in_month)
+
+        counts = {}
+        if team_ids:
+            rows = (
+                db.query(LeaveRequest.date, func.count(LeaveRequest.id).label("on_leave"))
+                .filter(
+                    LeaveRequest.user_id.in_(team_ids),
+                    LeaveRequest.date >= start,
+                    LeaveRequest.date <= end,
+                    LeaveRequest.status == "approved",
+                )
+                .group_by(LeaveRequest.date)
+                .all()
+            )
+            counts = {row.date: row.on_leave for row in rows}
+
         out = []
         for day_num in range(1, days_in_month + 1):
             d = date_cls(year, mon, day_num)
-            n = on_leave_count(d)
+            n = counts.get(d, 0)
             out.append(CapacityDayOut(date=d, total=total, on_leave=n, available=total - n))
         return out
 
@@ -520,6 +629,23 @@ def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)):
         maternity=180.0,
         paternity=30.0,
     ))
+
+    if _smtp_configured():
+        try:
+            _send_temporary_password_email(payload.email.strip(), temp_password)
+        except Exception as exc:
+            logging.warning(
+                "Unable to send temporary password email to %s; created user anyway. SMTP error: %s",
+                payload.email.strip(),
+                exc,
+                exc_info=True,
+            )
+    else:
+        logging.warning(
+            "SMTP config missing; skipping temporary password email for %s.",
+            payload.email.strip(),
+        )
+
     db.commit()
     db.refresh(user)
 
