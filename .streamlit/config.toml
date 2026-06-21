@@ -1,0 +1,15 @@
+[theme]
+# Without this, Streamlit falls back to its own default accent (#FF4B4B,
+# a red) for every native widget's focus/active state — selectboxes,
+# checkboxes, sliders, radio buttons. That stray red was the cause of the
+# red-bordered location selectbox on the Holiday Calendar screen. Setting
+# primaryColor to the app's navy fixes it at the source, on top of the
+# CSS-level backstop in design_tokens.py.
+primaryColor = "#0B1F3A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F7F9FC"
+textColor = "#0F1729"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

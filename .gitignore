@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+# Python virtual environments - never commit these (huge, machine-specific)
+venv/
+.venv/
+env/
+ENV/
+**/pyvenv.cfg
+**/Lib/
+**/Scripts/
+**/Include/
+**/bin/python*
+**/lib/python*/site-packages/
